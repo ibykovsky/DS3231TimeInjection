@@ -1,0 +1,218 @@
+﻿/*
+ * выводит текущее время и установливает дату 
+ * принимая строку по serial-порту
+ */
+ 
+#include <stdio.h>
+#include <Wire.h>
+
+const int BaudRate = 9600;
+
+#undef LOG
+#define LOG
+
+// printf support
+static int serial_fputchar(const char ch, FILE *stream) { Serial.write(ch); return ch; }
+static FILE *serial_stream = fdevopen(serial_fputchar, NULL);
+
+// printf binary output support
+#define BYTE_TO_BINARY_PATTERN "%c%c%c%c%c%c%c%c"
+#define BYTE_TO_BINARY(byte)  \
+  (byte & 0x80 ? '1' : '0'), \
+  (byte & 0x40 ? '1' : '0'), \
+  (byte & 0x20 ? '1' : '0'), \
+  (byte & 0x10 ? '1' : '0'), \
+  (byte & 0x08 ? '1' : '0'), \
+  (byte & 0x04 ? '1' : '0'), \
+  (byte & 0x02 ? '1' : '0'), \
+  (byte & 0x01 ? '1' : '0')
+  
+const byte DS3231 = 0x68; // I2C адрес таймера DS3231
+
+String inputString = "";    // a String to hold incoming data
+bool stringComplete = false;// whether the string is complete
+int position = 0;
+
+void setup() {
+  // put your setup code here, to run once:
+
+  Wire.begin();
+
+  Serial.begin(BaudRate);
+  const String DateTimeTemplate = "2002-05-30T09:00:00";
+  inputString.reserve(DateTimeTemplate.length());
+
+}
+
+void loop() {
+  // put your main code here, to run repeatedly:
+
+  Wire.beginTransmission(DS3231); // начинаем обмен с устройством по адресу DS3231
+  Wire.write(byte(0x00)); // записываем адрес регистра, с которого начинаем чтение!!!
+  Wire.endTransmission(); // завершаем передачу
+
+  byte t[7]; // массив для хранения даты и времени
+  int i = 0; // индекс текущего элемента массива
+  Wire.beginTransmission(DS3231); // начинаем обмен с DS3231
+  Wire.requestFrom(DS3231, 7); // запрашиваем 7 байтов у DS3231
+  while(Wire.available()) { // пока есть данные от DS3231
+    t[i] = Wire.read(); // читаем 1 байт и сохраняем в массив t
+    i++; // инкрементируем индекс элемента массива
+  }
+  Wire.endTransmission(); // завершаем обмен
+  
+  printDateTime(t); // выводим дату и время
+
+  // Check input
+  if (stringComplete) {
+#ifdef LOG
+    Serial.println(inputString);
+#endif
+    setTime(inputString);
+    // clear the string:
+    inputString = "";
+    stringComplete = false;
+  }
+  
+  delay(1000); // пауза 1 секунда
+
+}
+
+// разбирает считанный массив и выводит дату и время 
+void printDateTime(byte *arr) {
+  if (arr[4]<10) Serial.print("0"); // дополнение нулями слева для выравнивания
+  Serial.print(arr[4], HEX); // выводим дату
+  Serial.print(".");
+  if (arr[5]<10) Serial.print("0"); 
+  Serial.print(arr[5], HEX); // выводим месяц
+  Serial.print(".20"); // 2000-ые годы подразумеваются
+  Serial.print(arr[6], HEX); // выводим год
+  Serial.print(" ");
+  if (arr[2]<10) Serial.print("0"); 
+  Serial.print(arr[2], HEX); // выводим час
+  Serial.print(":");
+  if (arr[1]<10) Serial.print("0"); 
+  Serial.print(arr[1], HEX); // выводим минуты
+  Serial.print(":");
+  if (arr[0]<10) Serial.print("0"); 
+  Serial.println(arr[0], HEX); // выводим секунды  
+}
+
+void serialEvent() {
+  while (Serial.available()) {
+    // get the new byte:
+    char inChar = (char)Serial.read();
+    ++position;
+
+    // add it to the inputString:
+    if (inChar == '\n') {
+      stringComplete = true;
+    }else{
+      inputString += inChar;
+    }
+    // if the incoming character is a newline, set a flag so the main loop can
+    // do something about it:
+  }
+}
+
+#define y0 (dateTime[0]-'0')
+#define y1 (dateTime[1]-'0')
+#define y2 (dateTime[2]-'0')
+#define y3 (dateTime[3]-'0')
+
+#define M0 (dateTime[5]-'0')
+#define M1 (dateTime[6]-'0')
+
+#define d0 (dateTime[8]-'0')
+#define d1 (dateTime[9]-'0')
+
+#define h0 (dateTime[11]-'0')
+#define h1 (dateTime[12]-'0')
+
+#define m0 (dateTime[14]-'0')
+#define m1 (dateTime[15]-'0')
+
+#define s0 (dateTime[17]-'0')
+#define s1 (dateTime[18]-'0')
+
+void setTime(String dateTime){
+
+  //012345678901234
+  //2021 01 01 5 23 59 59 2021 jan 01 fri
+  //0123456789012345678
+  //2002-05-30T09:00:00
+
+  int y10 = 1000*y0+100*y1+10*y2+y3;
+  int M10 = 10*M0+M1;
+  int d10 = 10*d0+d1;
+  byte w = weekDay(y10, M10, d10);   
+  
+  byte y = 16 * y2 + y3;
+  byte M = 16 * M0 + M1;
+  byte d = 16 * d0 + d1;
+  byte h = 16 * h0 + h1;
+  byte m = 16 * m0 + m1;
+  byte s = 16 * s0 + s1;
+  
+  #ifdef LOG
+  printf("w=%d, w=%02x", w, w);
+  printf(", w="BYTE_TO_BINARY_PATTERN,BYTE_TO_BINARY(y));
+  printf("\n");
+
+  printf("y=%d, y=%02x", y, y);
+  printf(", y="BYTE_TO_BINARY_PATTERN,BYTE_TO_BINARY(y));
+  printf("\n");
+
+  printf("M=%d, M=%02x", M, M);
+  printf(", M="BYTE_TO_BINARY_PATTERN,BYTE_TO_BINARY(M));
+  printf("\n");
+
+  printf("d=%d, d=%02x", d, d);
+  printf(", d="BYTE_TO_BINARY_PATTERN,BYTE_TO_BINARY(d));
+  printf("\n");
+  
+  printf("w=%d, w=%02x", w, w);
+  printf(", w="BYTE_TO_BINARY_PATTERN,BYTE_TO_BINARY(w));
+  printf("\n");
+  
+  printf("h=%d, h=%02x", h, h);
+  printf(", h="BYTE_TO_BINARY_PATTERN,BYTE_TO_BINARY(h));
+  printf("\n");
+  
+  printf("m=%d, m=%02x", m, m);
+  printf(", m="BYTE_TO_BINARY_PATTERN,BYTE_TO_BINARY(m));
+  printf("\n");
+  
+  printf("s=%d, s=%02x", s, s);
+  printf(", s="BYTE_TO_BINARY_PATTERN,BYTE_TO_BINARY(s));
+  printf("\n");
+  #endif
+
+  //printf("Leading text "BYTE_TO_BINARY_PATTERN, BYTE_TO_BINARY(byte));
+
+  // Serial.print(inputString[i]);
+
+  byte arr[] = {0x00, s, m, h, w, d, M, y};
+  
+  Wire.begin(); // старт i2c
+  Wire.beginTransmission(DS3231); // начинаем обмен с DS3231 с i2c адресом 0x68
+  Wire.write(arr, 8); // записываем 8 байтов массива arr
+  Wire.endTransmission(); // завершение передачи
+}
+
+int weekDay(int year, int month, int day){
+
+  if(3>month){
+    --year;
+    month+=10;
+  }else{
+    month-=2;
+  }
+
+  int w = (day + (31*month)/12 + year + year/4 - year/100 + year/400) % 7;
+  
+  if(0==w) 
+    w = 7;
+
+  return w;
+}
